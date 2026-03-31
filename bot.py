@@ -3,6 +3,8 @@ import os
 import re
 import time
 from pathlib import Path
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import requests
 from bs4 import BeautifulSoup
@@ -12,10 +14,13 @@ from dotenv import load_dotenv
 dotenv_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=dotenv_path)
 
+TIMEZONE = ZoneInfo("America/Chicago")
+SUNDAY_HOUR = 8
+WEDNESDAY_HOUR = 8
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 SCRAPEDO_TOKEN = os.getenv("SCRAPEDO_TOKEN")
-CHECK_EVERY_MINUTES = int(os.getenv("CHECK_EVERY_MINUTES", "30"))
 
 STATE_FILE = Path(__file__).parent / ".alert_state.json"
 
@@ -345,12 +350,21 @@ def build_message(alerts):
     return "\n".join(lines).strip()
 
 
-def check_all_products():
-    print("Checking deals...")
+def check_all_products(day_mode):
+    print(f"Checking deals for mode: {day_mode}")
     state = load_state()
     alerts = []
 
     for product in PRODUCTS:
+        store = product["store"]
+
+        if day_mode == "sunday":
+            if store != "Target":
+                continue
+        elif day_mode == "wednesday":
+            if store == "Target":
+                continue
+
         try:
             print(f"Fetching {product['store']} | {product['label']}")
             html = fetch_html(product["url"])
@@ -403,7 +417,52 @@ def check_all_products():
     save_state(state)
 
 
+def next_run_time(now):
+    sunday_run = now.replace(
+        hour=SUNDAY_HOUR,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    wednesday_run = now.replace(
+        hour=WEDNESDAY_HOUR,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+    candidates = []
+
+    days_until_sunday = (6 - now.weekday()) % 7
+    next_sunday = sunday_run + timedelta(days=days_until_sunday)
+    if next_sunday <= now:
+        next_sunday += timedelta(days=7)
+    candidates.append(("sunday", next_sunday))
+
+    days_until_wednesday = (2 - now.weekday()) % 7
+    next_wednesday = wednesday_run + timedelta(days=days_until_wednesday)
+    if next_wednesday <= now:
+        next_wednesday += timedelta(days=7)
+    candidates.append(("wednesday", next_wednesday))
+
+    return min(candidates, key=lambda x: x[1])
+
+
+def sleep_until_next_run():
+    now = datetime.now(TIMEZONE)
+    mode, run_at = next_run_time(now)
+    seconds = max(1, int((run_at - now).total_seconds()))
+
+    print(f"Now: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    print(f"Next run: {run_at.strftime('%Y-%m-%d %H:%M:%S %Z')} ({mode})")
+    print(f"Sleeping for {seconds} seconds")
+
+    time.sleep(seconds)
+    return mode
+
+
 if __name__ == "__main__":
     while True:
-        check_all_products()
-        time.sleep(CHECK_EVERY_MINUTES * 60)
+        mode = sleep_until_next_run()
+        check_all_products(mode)
+        time.sleep(5)
