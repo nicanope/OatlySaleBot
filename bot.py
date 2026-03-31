@@ -3,7 +3,6 @@ import os
 import re
 import time
 from pathlib import Path
-from urllib.parse import quote
 
 import requests
 from bs4 import BeautifulSoup
@@ -81,22 +80,18 @@ def send_telegram(message):
 # SCRAPE.DO
 # -----------------------------
 def fetch_html(url):
-
-    encoded = quote(url, safe="")
-
     params = {
         "token": SCRAPEDO_TOKEN,
-        "url": encoded,
+        "url": url,
         "render": "true",
         "geoCode": "us",
+        "super": "true",
+        "timeout": "60000",
     }
 
-    response = requests.get("https://api.scrape.do/", params=params)
-
+    response = requests.get("https://api.scrape.do/", params=params, timeout=90)
     response.raise_for_status()
-
     return response.text
-
 
 # -----------------------------
 # PRICE PARSER
