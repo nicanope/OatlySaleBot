@@ -14,11 +14,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 ZIP_CODE = os.getenv("ZIP_CODE")
 
-# TEST: print them
-print("BOT_TOKEN =", BOT_TOKEN)
-print("CHAT_ID =", CHAT_ID)
-print("ZIP_CODE =", ZIP_CODE)
-
 # -------- TELEGRAM -------- #
 
 def send_telegram(message):
@@ -141,7 +136,6 @@ def run_check():
 # -------- RAILWAY LOOP -------- #
 
 if __name__ == "__main__":
-    send_telegram("✅ Oatly bot is now running on Railway!")
 
     while True:
         run_check()
