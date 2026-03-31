@@ -140,6 +140,3 @@ if __name__ == "__main__":
     while True:
         run_check()
         time.sleep(1800)
-    while True:
-        run_check()
-        time.sleep(1800)  # every 30 minutes
