@@ -9,9 +9,6 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 
-# -----------------------------
-# ENV
-# -----------------------------
 dotenv_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=dotenv_path)
 
@@ -30,9 +27,6 @@ if not SCRAPEDO_TOKEN:
     raise ValueError("Missing SCRAPEDO_TOKEN")
 
 
-# -----------------------------
-# PRODUCTS TO WATCH
-# -----------------------------
 PRODUCTS = [
     {
         "store": "Amazon",
@@ -46,7 +40,7 @@ PRODUCTS = [
         "label": "Oatly Original 64oz",
         "threshold": 5.00,
         "url": "https://www.amazon.com/Oatly-OATLY-Original-Oat-Milk/dp/B075QJ8M1K",
-        "expected_keywords": ["oatly"],
+        "expected_keywords": ["oatly", "original"],
     },
     {
         "store": "Target",
@@ -74,42 +68,18 @@ PRODUCTS = [
         "label": "Oatly Full Fat 64oz",
         "threshold": 5.00,
         "url": "https://www.heb.com/product-detail/oatly-full-fat-oat-milk/9026509",
-        "expected_keywords": ["oatly"],
+        "expected_keywords": ["oatly", "full", "fat"],
     },
     {
         "store": "H-E-B",
         "label": "Oatly Original 64oz",
         "threshold": 5.00,
         "url": "https://www.heb.com/product-detail/oatly-the-original-oat-milk/2242160",
-        "expected_keywords": ["oatly"],
-    },
-    {
-        "store": "Randalls",
-        "label": "Oatly Barista 32oz",
-        "threshold": 4.00,
-        "url": "https://www.randalls.com/shop/product-details.970008328.html",
-        "expected_keywords": ["oatly", "barista"],
-    },
-    {
-        "store": "Randalls",
-        "label": "Oatly Original 64oz",
-        "threshold": 5.00,
-        "url": "https://www.randalls.com/shop/product-details.960451820.html",
-        "expected_keywords": ["oatly"],
-    },
-    {
-        "store": "Randalls",
-        "label": "Oatly Full Fat 64oz",
-        "threshold": 5.00,
-        "url": "https://www.randalls.com/shop/product-details.960536091.html",
-        "expected_keywords": ["oatly"],
+        "expected_keywords": ["oatly", "original"],
     },
 ]
 
 
-# -----------------------------
-# TELEGRAM
-# -----------------------------
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     response = requests.post(
@@ -121,13 +91,9 @@ def send_telegram(message):
     response.raise_for_status()
 
 
-# -----------------------------
-# STATE
-# -----------------------------
 def load_state():
     if not STATE_FILE.exists():
         return {}
-
     try:
         return json.loads(STATE_FILE.read_text())
     except Exception:
@@ -138,10 +104,7 @@ def save_state(state):
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
-# -----------------------------
-# SCRAPE.DO
-# -----------------------------
-def fetch_html(url):
+def fetch_html(url, retries=3):
     params = {
         "token": SCRAPEDO_TOKEN,
         "url": url,
@@ -151,18 +114,25 @@ def fetch_html(url):
         "timeout": "60000",
     }
 
-    response = requests.get(
-        "https://api.scrape.do/",
-        params=params,
-        timeout=90,
-    )
-    response.raise_for_status()
-    return response.text
+    last_error = None
+
+    for attempt in range(retries):
+        try:
+            response = requests.get(
+                "https://api.scrape.do/",
+                params=params,
+                timeout=90,
+            )
+            response.raise_for_status()
+            return response.text
+        except Exception as e:
+            last_error = e
+            if attempt < retries - 1:
+                time.sleep(3)
+
+    raise last_error
 
 
-# -----------------------------
-# PARSING HELPERS
-# -----------------------------
 def clean_text(text):
     return " ".join(text.split())
 
@@ -193,8 +163,8 @@ def title_from_soup(soup):
 
 
 def page_contains_expected_product(title, expected_keywords):
-    title_lower = title.lower()
-    return all(keyword.lower() in title_lower for keyword in expected_keywords)
+    t = title.lower()
+    return all(keyword.lower() in t for keyword in expected_keywords)
 
 
 def parse_price_string(raw):
@@ -207,28 +177,22 @@ def parse_price_string(raw):
         return None
 
     try:
-        value = float(match.group(1))
+        return round(float(match.group(1)), 2)
     except ValueError:
         return None
 
-    return round(value, 2)
-
 
 def valid_carton_price(value):
-    if value is None:
-        return False
-    return 2.50 <= value <= 12.00
+    return value is not None and 2.50 <= value <= 12.00
 
 
 def prices_from_meta(soup):
     prices = []
 
-    selectors = [
+    for selector in [
         'meta[itemprop="price"]',
         'meta[property="product:price:amount"]',
-    ]
-
-    for selector in selectors:
+    ]:
         for el in soup.select(selector):
             value = parse_price_string(el.get("content") or el.get("value"))
             if valid_carton_price(value):
@@ -268,14 +232,14 @@ def prices_from_json_ld(soup):
     return prices
 
 
-def prices_from_visible_text(soup, store):
+def prices_from_visible_text_generic(soup):
     text = clean_text(soup.get_text(" ", strip=True))
     prices = []
 
     patterns = [
         r"Current price[:\s]*\$?\s*(\d+(?:\.\d{1,2})?)",
         r"Sale price[:\s]*\$?\s*(\d+(?:\.\d{1,2})?)",
-        r"Price[:\s]*\$?\s*(\d+(?:\.\d{1,2})?)",
+        r"Your Price[:\s]*\$?\s*(\d+(?:\.\d{1,2})?)",
         r"Now[:\s]*\$?\s*(\d+(?:\.\d{1,2})?)",
         r"\$(\d+(?:\.\d{1,2})?)",
     ]
@@ -286,17 +250,41 @@ def prices_from_visible_text(soup, store):
             if valid_carton_price(value):
                 prices.append(value)
 
-    # Extra cleanup for Amazon noise:
-    # Prefer prices that are not tiny unit prices.
-    if store.lower() == "amazon":
-        prices = [p for p in prices if p >= 3.00]
+    return prices
+
+
+def prices_from_visible_text_amazon(soup):
+    prices = prices_from_visible_text_generic(soup)
+    return [p for p in prices if p >= 3.00]
+
+
+def prices_from_visible_text_heb(soup):
+    text = clean_text(soup.get_text(" ", strip=True))
+    prices = []
+
+    patterns = [
+        r"Current price[:\s]*\$?\s*(\d+(?:\.\d{1,2})?)",
+        r"Your cart price[:\s]*\$?\s*(\d+(?:\.\d{1,2})?)",
+        r"price per item[:\s]*\$?\s*(\d+(?:\.\d{1,2})?)",
+        r"\bfor \$?\s*(\d+(?:\.\d{1,2})?)",
+    ]
+
+    for pattern in patterns:
+        for match in re.findall(pattern, text, flags=re.IGNORECASE):
+            value = parse_price_string(match)
+            if valid_carton_price(value):
+                prices.append(value)
 
     return prices
 
 
-def choose_best_price(prices):
+def choose_best_price(store, prices):
     if not prices:
         return None
+
+    if store.lower() == "h-e-b":
+        return max(prices)
+
     return min(prices)
 
 
@@ -312,9 +300,16 @@ def parse_product_page(html, store, expected_keywords):
     candidates = []
     candidates.extend(prices_from_meta(soup))
     candidates.extend(prices_from_json_ld(soup))
-    candidates.extend(prices_from_visible_text(soup, store))
 
-    price = choose_best_price(candidates)
+    store_lower = store.lower()
+    if store_lower == "amazon":
+        candidates.extend(prices_from_visible_text_amazon(soup))
+    elif store_lower == "h-e-b":
+        candidates.extend(prices_from_visible_text_heb(soup))
+    else:
+        candidates.extend(prices_from_visible_text_generic(soup))
+
+    price = choose_best_price(store, candidates)
 
     return {
         "title": title,
@@ -323,14 +318,9 @@ def parse_product_page(html, store, expected_keywords):
     }
 
 
-# -----------------------------
-# BUSINESS LOGIC
-# -----------------------------
 def already_alerted_same_price(state, url, price):
     existing = state.get(url)
-    if not existing:
-        return False
-    return existing.get("last_alert_price") == price
+    return bool(existing and existing.get("last_alert_price") == price)
 
 
 def remember_alert(state, product, title, price):
@@ -376,18 +366,18 @@ def check_all_products():
             )
 
             if not parsed["valid_product"]:
-                print("Skipping: page does not look like the expected product.")
+                print("Skipping: not the expected product.")
                 continue
 
             if parsed["price"] is None:
-                print("Skipping: no usable carton price found.")
+                print("Skipping: no usable price found.")
                 continue
 
             if parsed["price"] > product["threshold"]:
                 continue
 
             if already_alerted_same_price(state, product["url"], parsed["price"]):
-                print("Skipping: already alerted for this same price.")
+                print("Skipping: already alerted for same price.")
                 continue
 
             alerts.append(
@@ -399,12 +389,7 @@ def check_all_products():
                 }
             )
 
-            remember_alert(
-                state=state,
-                product=product,
-                title=parsed["title"],
-                price=parsed["price"],
-            )
+            remember_alert(state, product, parsed["title"], parsed["price"])
 
         except Exception as e:
             print(f"Error checking {product['store']} | {product['label']}: {e}")
@@ -418,9 +403,6 @@ def check_all_products():
     save_state(state)
 
 
-# -----------------------------
-# MAIN LOOP
-# -----------------------------
 if __name__ == "__main__":
     while True:
         check_all_products()
