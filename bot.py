@@ -24,7 +24,13 @@ print("ZIP_CODE =", ZIP_CODE)
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     try:
-        requests.post(url, data={"chat_id": CHAT_ID, "text": message})
+        response = requests.post(
+            url,
+            data={"chat_id": CHAT_ID, "text": message},
+            timeout=15
+        )
+        print("Telegram status:", response.status_code)
+        print("Telegram response:", response.text)
     except Exception as e:
         print("Telegram error:", e)
 
