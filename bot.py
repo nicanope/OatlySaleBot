@@ -135,6 +135,11 @@ def run_check():
 # -------- RAILWAY LOOP -------- #
 
 if __name__ == "__main__":
+    send_telegram("✅ Oatly bot is now running on Railway!")
+
+    while True:
+        run_check()
+        time.sleep(1800)
     while True:
         run_check()
         time.sleep(1800)  # every 30 minutes
