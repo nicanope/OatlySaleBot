@@ -302,15 +302,22 @@ def parse_product_page(html, store, expected_keywords):
 
     valid_product = page_contains_expected_product(title, expected_keywords)
 
+    meta_prices = prices_from_meta(soup)
+    json_ld_prices = prices_from_json_ld(soup)
+
     candidates = []
-    candidates.extend(prices_from_meta(soup))
-    candidates.extend(prices_from_json_ld(soup))
+    candidates.extend(meta_prices)
+    candidates.extend(json_ld_prices)
 
     store_lower = store.lower()
+
     if store_lower == "amazon":
-        candidates.extend(prices_from_visible_text_amazon(soup))
+        # Amazon visible text is noisy — don't use fallback
+        pass
+
     elif store_lower == "h-e-b":
         candidates.extend(prices_from_visible_text_heb(soup))
+
     else:
         candidates.extend(prices_from_visible_text_generic(soup))
 
